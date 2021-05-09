@@ -44,7 +44,7 @@ class Model:
 
         # extract data of the US
         lat_us = np.argwhere(np.logical_and(lat > 29.06, lat<48.97))[:,0]
-        lon_us = np.argwhere(np.logical_and(lon>-123.3+180, lon<-81.2+180))[:,0]
+        lon_us = np.argwhere(np.logical_and(lon > np.mod(-123.3,360),lon < np.mod(-81.2, 360)))[:,0]
         lon_ind, lat_ind = np.meshgrid(lon_us, lat_us)
 
         T_US = T[:, lat_ind, lon_ind]
