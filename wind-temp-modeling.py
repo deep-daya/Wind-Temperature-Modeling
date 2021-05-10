@@ -5,10 +5,10 @@ from tensorflow import keras
 from tensorflow.keras import layers
 import os
 from matplotlib import pyplot as plt
-
+from keras.callbacks import ModelCheckpoint, LearningRateScheduler, EarlyStopping, ReduceLROnPlateau
 class Model:
-    def __init__(self, percent_train_test = 0.8, percent_train_val = 0.8, window_size = 10, activation = "tanh",loss_fxn="MSE", 
-    epochs = 70, batch_size = 15, verbose = 1, shuffle = True ):
+    def __init__(self, percent_train_test = 0.8, percent_train_val = 0.8, window_size = 12, activation = "tanh",loss_fxn="MSE", 
+    epochs = 70, batch_size = 12, verbose = 1, shuffle = True ):
         self.train_amount = percent_train_test
         self.percent_train_val = percent_train_val
         self.num_time = window_size
@@ -47,9 +47,9 @@ class Model:
         lon_us = np.argwhere(np.logical_and(lon > np.mod(-123.3,360),lon < np.mod(-81.2, 360)))[:,0]
         lon_ind, lat_ind = np.meshgrid(lon_us, lat_us)
 
-        T_US = T[:, lat_ind, lon_ind]
-        u_US = u[:, lat_ind, lon_ind]
-        v_US = v[:, lat_ind, lon_ind]
+        T_US = T[:-4, lat_ind, lon_ind]
+        u_US = u[:-4, lat_ind, lon_ind]
+        v_US = v[:-4, lat_ind, lon_ind]
 
         # combine u, v, T into one input tensor of shape (num_samples, num_t, nlat, nlon, 3)
         X = np.zeros((u_US.shape[0], u_US.shape[1], u_US.shape[2], 3))
@@ -106,19 +106,19 @@ class Model:
                     shape=(self.num_time, self.rows, self.cols,self.channels), name="input_layer"
                 ),
                 keras.layers.ConvLSTM2D(
-                    filters = 40, kernel_size = (3, 3), return_sequences = True, data_format = "channels_last", input_shape = (self.num_time, self.rows, self.cols,self.channels), padding="same", activation = self.activation
+                    filters = 64, kernel_size = (3, 3), return_sequences = True, data_format = "channels_last", input_shape = (self.num_time, self.rows, self.cols,self.channels), padding="same", activation = self.activation
                 ),               
                 keras.layers.BatchNormalization(),
                 layers.ConvLSTM2D(
-                    filters=40, kernel_size=(3, 3), padding="same", return_sequences=True
+                    filters=64, kernel_size=(3, 3), padding="same", return_sequences=True
                 ),
                 layers.BatchNormalization(),
                 layers.ConvLSTM2D(
-                    filters=40, kernel_size=(3, 3), padding="same", return_sequences=True
+                    filters=64, kernel_size=(3, 3), padding="same", return_sequences=True
                 ),
                 layers.BatchNormalization(),
                 layers.ConvLSTM2D(
-                    filters=40, kernel_size=(3, 3), padding="same", return_sequences=True
+                    filters=64, kernel_size=(3, 3), padding="same", return_sequences=True
                 ),
                 layers.BatchNormalization(),
                 layers.Conv3D(
@@ -126,16 +126,34 @@ class Model:
                 ),
             ]
         )
-        model.compile(loss = self.loss_fn,optimizer="adam")
+        model.compile(loss = self.loss_fn,optimizer="adam", metrics = ['accuracy','mse'])
+
         self.model = model
-        print(model)
+        print(model.summary())
         return
 
     def training(self):
-        self.model.fit(
+        self.history = self.model.fit(
             self.X_train_plus_val, self.Y_train_plus_val, batch_size=self.batch_size, epochs=self.epochs, verbose=self.verbose,
-            validation_split=self.percent_train_val, shuffle = self.shuffle
+            validation_split= 1- self.percent_train_val, shuffle = self.shuffle
         )
+        history = self.history
+        print(history.history.keys())
+        plt.plot(history.history['acc'])
+        plt.plot(history.history['val_acc'])
+        plt.title('model accuracy')
+        plt.ylabel('accuracy')
+        plt.xlabel('epoch')
+        plt.legend(['train', 'val'], loc='upper left')
+        plt.show()
+        # summarize history for loss
+        plt.plot(history.history['loss'])
+        plt.plot(history.history['val_loss'])
+        plt.title('model loss')
+        plt.ylabel('loss')
+        plt.xlabel('epoch')
+        plt.legend(['train', 'val'], loc='upper left')
+        plt.show()
         return
     
 def main():
