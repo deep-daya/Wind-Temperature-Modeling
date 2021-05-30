@@ -8,7 +8,7 @@ import os
 from matplotlib import pyplot as plt
 from keras.callbacks import ModelCheckpoint, LearningRateScheduler, EarlyStopping, ReduceLROnPlateau
 
-USE_GPU = False
+USE_GPU = True
 
 if USE_GPU:
     device = '/device:GPU:0'
@@ -16,7 +16,7 @@ else:
     device = '/cpu:0'
 
 class Model:
-    def __init__(self, percent_train_test = 0.8, percent_train_val = 0.8, window_size = 24, activation = "relu",loss_fxn="MSE", 
+    def __init__(self, percent_train_test = 0.8, percent_train_val = 0.8, window_size = 24, activation = "relu",loss_fxn="MSE",
     epochs = 200, batch_size = 24, verbose = 1, shuffle = True ):
         self.train_amount = percent_train_test
         self.percent_train_val = percent_train_val
@@ -32,7 +32,7 @@ class Model:
 
     def load_data(self):
         # read in data
-        dir = './'
+        dir = 'ncep_data/'
         data = Dataset(dir + 'air.mon.mean.nc', 'r')
         T = data.variables['air'][:,0]
         t = data.variables['time'][:]
@@ -71,13 +71,13 @@ class Model:
         X[:,:,:,0] = T_US
         X[:,:,:,1] = u_US
         X[:,:,:,2] = v_US
+
         # normlize input data
         X_mean = np.mean(X, axis=0)
         X_std = np.std(X, axis=0)
         X = (X - X_mean)/X_std
 
         X = X.reshape(int(X.shape[0]/self.num_time), self.num_time, X.shape[1],X.shape[2],X.shape[3])
-
 
         # partition train and test data
         #  80% train, 20% test
