@@ -1,4 +1,5 @@
 import numpy as np
+import tensorflow as tf
 from netCDF4 import Dataset
 import matplotlib.pyplot as plt
 from tensorflow import keras
@@ -6,9 +7,17 @@ from tensorflow.keras import layers
 import os
 from matplotlib import pyplot as plt
 from keras.callbacks import ModelCheckpoint, LearningRateScheduler, EarlyStopping, ReduceLROnPlateau
+
+USE_GPU = True
+
+if USE_GPU:
+    device = '/device:GPU:0'
+else:
+    device = '/cpu:0'
+
 class Model:
-    def __init__(self, percent_train_test = 0.8, percent_train_val = 0.8, window_size = 12, activation = "tanh",loss_fxn="MSE", 
-    epochs = 70, batch_size = 12, verbose = 1, shuffle = True ):
+    def __init__(self, percent_train_test = 0.8, percent_train_val = 0.8, window_size = 24, activation = "relu",loss_fxn="MSE", 
+    epochs = 40, batch_size = 8, verbose = 1, shuffle = True ):
         self.train_amount = percent_train_test
         self.percent_train_val = percent_train_val
         self.num_time = window_size
@@ -23,18 +32,19 @@ class Model:
 
     def load_data(self):
         # read in data
-        data = Dataset('./air.mon.mean.nc', 'r')
+        dir = 'ncep_data/'
+        data = Dataset(dir + 'air.mon.mean.nc', 'r')
         T = data.variables['air'][:,0]
         t = data.variables['time'][:]
         lat = data.variables['lat'][:]
         lon = data.variables['lon'][:]
         data.close()
 
-        data = Dataset('./uwnd.mon.mean.nc', 'r')
+        data = Dataset(dir + 'uwnd.mon.mean.nc', 'r')
         u = data.variables['uwnd'][:,0]
         data.close()
 
-        data = Dataset('./vwnd.mon.mean.nc', 'r')
+        data = Dataset(dir + './vwnd.mon.mean.nc', 'r')
         v = data.variables['vwnd'][:,0]
         data.close()
         
@@ -47,12 +57,15 @@ class Model:
         lon_us = np.argwhere(np.logical_and(lon > np.mod(-123.3,360),lon < np.mod(-81.2, 360)))[:,0]
         lon_ind, lat_ind = np.meshgrid(lon_us, lat_us)
 
-        T_US = T[:-4, lat_ind, lon_ind]
-        u_US = u[:-4, lat_ind, lon_ind]
-        v_US = v[:-4, lat_ind, lon_ind]
+        n_sample = int(T.shape[0]/self.num_time)*self.num_time
+        print('******num samp=', n_sample,'*******')
+
+        T_US = T[:n_sample, lat_ind, lon_ind]
+        u_US = u[:n_sample, lat_ind, lon_ind]
+        v_US = v[:n_sample, lat_ind, lon_ind]
 
         # combine u, v, T into one input tensor of shape (num_samples, num_t, nlat, nlon, 3)
-        X = np.zeros((u_US.shape[0], u_US.shape[1], u_US.shape[2], 3))
+        X = np.zeros((n_sample, u_US.shape[1], u_US.shape[2], 3))
         print('input shape:', X.shape)
 
         X[:,:,:,0] = T_US
@@ -100,33 +113,40 @@ class Model:
 
     def model_setup(self):
         # TO DO: Make this more accessible so layers can be defined in an easier manner
-        model = keras.Sequential(
+        with tf.device(device):
+          model = keras.Sequential(
             [
                 keras.layers.Input(
                     shape=(self.num_time, self.rows, self.cols,self.channels), name="input_layer"
                 ),
                 keras.layers.ConvLSTM2D(
-                    filters = 64, kernel_size = (3, 3), return_sequences = True, data_format = "channels_last", input_shape = (self.num_time, self.rows, self.cols,self.channels), padding="same", activation = self.activation
+                    filters = 64, kernel_size = (2, 2), return_sequences = True, data_format = "channels_last", input_shape = (self.num_time, self.rows, self.cols,self.channels), padding="same", activation = self.activation
                 ),               
                 keras.layers.BatchNormalization(),
                 layers.ConvLSTM2D(
-                    filters=64, kernel_size=(3, 3), padding="same", return_sequences=True
+                    filters=64, kernel_size=(2, 2), padding="same", return_sequences=True
                 ),
                 layers.BatchNormalization(),
-                layers.ConvLSTM2D(
-                    filters=64, kernel_size=(3, 3), padding="same", return_sequences=True
-                ),
-                layers.BatchNormalization(),
-                layers.ConvLSTM2D(
-                    filters=64, kernel_size=(3, 3), padding="same", return_sequences=True
-                ),
-                layers.BatchNormalization(),
+                #layers.ConvLSTM2D(
+                #    filters=64, kernel_size=(2, 2), padding="same", return_sequences=True
+                #),
+                #layers.BatchNormalization(),
+                #layers.ConvLSTM2D(
+                #    filters=64, kernel_size=(3, 3), padding="same", return_sequences=True
+                #),
+                #layers.BatchNormalization(),
                 layers.Conv3D(
                     filters=3, kernel_size=(3, 3, 3), activation="sigmoid", padding="same"
                 ),
             ]
         )
-        model.compile(loss = self.loss_fn,optimizer="adam", metrics = ['accuracy','mse'])
+
+          lr_schedule = keras.optimizers.schedules.ExponentialDecay(
+                        initial_learning_rate=1e-2,
+                        decay_steps=10000,
+                        decay_rate=0.9)
+          optimizer = keras.optimizers.Adam(learning_rate=lr_schedule, clipvalue=0.5)
+          model.compile(loss = self.loss_fn,optimizer=optimizer, metrics = ['accuracy','mse'])
 
         self.model = model
         print(model.summary())
@@ -139,8 +159,8 @@ class Model:
         )
         history = self.history
         print(history.history.keys())
-        plt.plot(history.history['acc'])
-        plt.plot(history.history['val_acc'])
+        plt.plot(history.history['accuracy'])
+        plt.plot(history.history['val_accuracy'])
         plt.title('model accuracy')
         plt.ylabel('accuracy')
         plt.xlabel('epoch')
