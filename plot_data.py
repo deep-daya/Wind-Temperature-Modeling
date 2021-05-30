@@ -43,7 +43,7 @@ def draw_map_merc(lat1=-90, lat2=90, lon1=0, lon2=360, dlat=30., dlon=60., lon0=
     return m
 
 
-data = Dataset('./air.mon.mean.nc', 'r')
+data = Dataset('../air.mon.mean.nc', 'r')
 T = data.variables['air'][:,0]
 t = data.variables['time'][:]
 lat = data.variables['lat'][:]
@@ -51,11 +51,11 @@ lon = data.variables['lon'][:]
 LON, LAT = np.meshgrid(lon, lat)
 data.close()
 
-data = Dataset('./uwnd.mon.mean.nc', 'r')
+data = Dataset('../uwnd.mon.mean.nc', 'r')
 u = data.variables['uwnd'][:,0]
 data.close()
 
-data = Dataset('./vwnd.mon.mean.nc', 'r')
+data = Dataset('../vwnd.mon.mean.nc', 'r')
 v = data.variables['vwnd'][:,0]
 data.close()
 
@@ -71,6 +71,10 @@ lon_ind, lat_ind = np.meshgrid(lon_us, lat_us)
 T_US = T[:, lat_ind, lon_ind]
 u_US = u[:, lat_ind, lon_ind]
 v_US = v[:, lat_ind, lon_ind]
+
+print('****nan?', np.any(np.isnan(T_US)))
+print('****nan?', np.any(np.isnan(u_US)))
+print('****nan?', np.any(np.isnan(v_US)))
 
 # extract coordinates of the US
 LON_US, LAT_US = np.meshgrid(lon[lon_us], lat[lat_us])

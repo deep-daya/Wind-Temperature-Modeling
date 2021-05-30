@@ -1,14 +1,23 @@
 import numpy as np
+import tensorflow as tf
 from netCDF4 import Dataset
 import matplotlib.pyplot as plt
 from tensorflow import keras
 from tensorflow.keras import layers
 import os
 from matplotlib import pyplot as plt
+from keras.callbacks import ModelCheckpoint, LearningRateScheduler, EarlyStopping, ReduceLROnPlateau
+
+USE_GPU = False
+
+if USE_GPU:
+    device = '/device:GPU:0'
+else:
+    device = '/cpu:0'
 
 class Model:
-    def __init__(self, percent_train_test = 0.8, percent_train_val = 0.8, window_size = 10, activation = "tanh",loss_fxn="MSE", 
-    epochs = 70, batch_size = 15, verbose = 1, shuffle = True ):
+    def __init__(self, percent_train_test = 0.8, percent_train_val = 0.8, window_size = 24, activation = "relu",loss_fxn="MSE", 
+    epochs = 200, batch_size = 24, verbose = 1, shuffle = True ):
         self.train_amount = percent_train_test
         self.percent_train_val = percent_train_val
         self.num_time = window_size
@@ -23,18 +32,19 @@ class Model:
 
     def load_data(self):
         # read in data
-        data = Dataset('./air.mon.mean.nc', 'r')
+        dir = './'
+        data = Dataset(dir + 'air.mon.mean.nc', 'r')
         T = data.variables['air'][:,0]
         t = data.variables['time'][:]
         lat = data.variables['lat'][:]
         lon = data.variables['lon'][:]
         data.close()
 
-        data = Dataset('./uwnd.mon.mean.nc', 'r')
+        data = Dataset(dir + 'uwnd.mon.mean.nc', 'r')
         u = data.variables['uwnd'][:,0]
         data.close()
 
-        data = Dataset('./vwnd.mon.mean.nc', 'r')
+        data = Dataset(dir + './vwnd.mon.mean.nc', 'r')
         v = data.variables['vwnd'][:,0]
         data.close()
         
@@ -47,18 +57,28 @@ class Model:
         lon_us = np.argwhere(np.logical_and(lon > np.mod(-123.3,360),lon < np.mod(-81.2, 360)))[:,0]
         lon_ind, lat_ind = np.meshgrid(lon_us, lat_us)
 
-        T_US = T[:, lat_ind, lon_ind]
-        u_US = u[:, lat_ind, lon_ind]
-        v_US = v[:, lat_ind, lon_ind]
+        n_sample = int(T.shape[0]/self.num_time)*self.num_time
+        print('******num samp=', n_sample,'*******')
+
+        T_US = T[:n_sample, lat_ind, lon_ind]
+        u_US = u[:n_sample, lat_ind, lon_ind]
+        v_US = v[:n_sample, lat_ind, lon_ind]
 
         # combine u, v, T into one input tensor of shape (num_samples, num_t, nlat, nlon, 3)
-        X = np.zeros((u_US.shape[0], u_US.shape[1], u_US.shape[2], 3))
+        X = np.zeros((n_sample, u_US.shape[1], u_US.shape[2], 3))
         print('input shape:', X.shape)
 
         X[:,:,:,0] = T_US
         X[:,:,:,1] = u_US
         X[:,:,:,2] = v_US
+        # normlize input data
+        X_mean = np.mean(X, axis=0)
+        X_std = np.std(X, axis=0)
+        X = (X - X_mean)/X_std
+
         X = X.reshape(int(X.shape[0]/self.num_time), self.num_time, X.shape[1],X.shape[2],X.shape[3])
+
+
         # partition train and test data
         #  80% train, 20% test
         num_train = int(X.shape[0]*self.train_amount)
@@ -100,42 +120,67 @@ class Model:
 
     def model_setup(self):
         # TO DO: Make this more accessible so layers can be defined in an easier manner
-        model = keras.Sequential(
+        with tf.device(device):
+          model = keras.Sequential(
             [
                 keras.layers.Input(
                     shape=(self.num_time, self.rows, self.cols,self.channels), name="input_layer"
                 ),
                 keras.layers.ConvLSTM2D(
-                    filters = 40, kernel_size = (3, 3), return_sequences = True, data_format = "channels_last", input_shape = (self.num_time, self.rows, self.cols,self.channels), padding="same", activation = self.activation
+                    filters = 64, kernel_size = (2, 2), return_sequences = True, data_format = "channels_last", input_shape = (self.num_time, self.rows, self.cols,self.channels), padding="same", activation = self.activation
                 ),               
                 keras.layers.BatchNormalization(),
                 layers.ConvLSTM2D(
-                    filters=40, kernel_size=(3, 3), padding="same", return_sequences=True
+                    filters=128, kernel_size=(2, 2), padding="same", return_sequences=True
                 ),
                 layers.BatchNormalization(),
-                layers.ConvLSTM2D(
-                    filters=40, kernel_size=(3, 3), padding="same", return_sequences=True
-                ),
-                layers.BatchNormalization(),
-                layers.ConvLSTM2D(
-                    filters=40, kernel_size=(3, 3), padding="same", return_sequences=True
-                ),
-                layers.BatchNormalization(),
+                #layers.ConvLSTM2D(
+                #    filters=64, kernel_size=(2, 2), padding="same", return_sequences=True
+                #),
+                #layers.BatchNormalization(),
+                #layers.ConvLSTM2D(
+                #    filters=64, kernel_size=(3, 3), padding="same", return_sequences=True
+                #),
+                #layers.BatchNormalization(),
                 layers.Conv3D(
                     filters=3, kernel_size=(3, 3, 3), activation="sigmoid", padding="same"
                 ),
             ]
         )
-        model.compile(loss = self.loss_fn,optimizer="adam")
+
+          lr_schedule = keras.optimizers.schedules.ExponentialDecay(
+                        initial_learning_rate=8e-3,
+                        decay_steps=10000,
+                        decay_rate=0.8)
+          optimizer = keras.optimizers.Adam(learning_rate=lr_schedule, clipvalue=0.5)
+          model.compile(loss = self.loss_fn,optimizer=optimizer, metrics = ['accuracy','mse'])
+
         self.model = model
-        print(model)
+        print(model.summary())
         return
 
     def training(self):
-        self.model.fit(
+        self.history = self.model.fit(
             self.X_train_plus_val, self.Y_train_plus_val, batch_size=self.batch_size, epochs=self.epochs, verbose=self.verbose,
-            validation_split=self.percent_train_val, shuffle = self.shuffle
+            validation_split= 1- self.percent_train_val, shuffle = self.shuffle
         )
+        history = self.history
+        print(history.history.keys())
+        plt.plot(history.history['accuracy'])
+        plt.plot(history.history['val_accuracy'])
+        plt.title('model accuracy')
+        plt.ylabel('accuracy')
+        plt.xlabel('epoch')
+        plt.legend(['train', 'val'], loc='upper left')
+        plt.show()
+        # summarize history for loss
+        plt.plot(history.history['loss'])
+        plt.plot(history.history['val_loss'])
+        plt.title('model loss')
+        plt.ylabel('loss')
+        plt.xlabel('epoch')
+        plt.legend(['train', 'val'], loc='upper left')
+        plt.show()
         return
     
 def main():
