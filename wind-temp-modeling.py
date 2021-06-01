@@ -153,7 +153,7 @@ class Model:
                 layers.ConvLSTM2D(
                     filters=128, kernel_size=(2, 2), padding="same", return_sequences=True
                 ),
-                layers.BatchNormalization(),
+                #layers.BatchNormalization(),
                 #layers.ConvLSTM2D(
                 #    filters=64, kernel_size=(2, 2), padding="same", return_sequences=True
                 #),
@@ -180,9 +180,14 @@ class Model:
         return
 
     def training(self):
+        self.cbk = CollectOutputAndTarget()
+        fetches = [tf.assign(self.cbk.target, self.model._targets[0], validate_shape=False),
+                   tf.assign(self.cbk.output, self.model.outputs[0], validate_shape=False),
+                   tf.assign(self.cbk.input, self.model.inputs[0], validate_shape=False)]
+        self.model._function_kwargs = {'fetches': fetches}  
         self.history = self.model.fit(
             self.X_train_plus_val, self.Y_train_plus_val, batch_size=self.batch_size, epochs=self.epochs, verbose=self.verbose,
-            validation_split= 1- self.percent_train_val, shuffle = self.shuffle
+            validation_split= 1- self.percent_train_val, shuffle = self.shuffle, callbacks=[self.cbk]
         )
         history = self.history
         print(history.history.keys())
@@ -203,6 +208,26 @@ class Model:
         plt.show()
         return
     
+    
+class CollectOutputAndTarget(Callback):
+    def __init__(self):
+        super(CollectOutputAndTarget, self).__init__()
+        self.targets = []  # collect y_true batches
+        self.outputs = []  # collect y_pred batches
+        self.inputs = []
+
+        # the shape of these 2 variables will change according to batch shape
+        # to handle the "last batch", specify `validate_shape=False`
+        self.input = tf.Variable(0.0, shape=tf.TensorShape(None))
+        self.target = tf.Variable(0.0, shape=tf.TensorShape(None))
+        self.output = tf.Variable(0.0, shape=tf.TensorShape(None))
+
+    def on_batch_end(self, batch, logs=None):
+        # evaluate the variables and save them into lists
+        self.inputs.append(K.eval(self.input))
+        self.targets.append(K.eval(self.target))
+        self.outputs.append(K.eval(self.output))
+       
 def main():
     convLstm = Model()
     convLstm.load_data()
@@ -211,3 +236,11 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+# For plotting, check if the data error was fixed!
+# z = (m.cbk.targets[158] - m.cbk.outputs[158]).reshape(8*18,8,17,3)[143,:,:,0]
+# x = m.lat_us
+# y = m.lon_us
+# import matplotlib.pyplot as plt
+# plt.imshow(z, cmap='hot', interpolation='nearest')
+# plt.colorbar()
