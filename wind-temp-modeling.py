@@ -5,12 +5,12 @@ import matplotlib.pyplot as plt
 from tensorflow import keras
 from tensorflow.keras import layers
 import os
-from sklearn.preprocessing import StandardScaler
-from sklearn.preprocessing import MinMaxScaler
+#from sklearn.preprocessing import StandardScaler
+#from sklearn.preprocessing import MinMaxScaler
 from matplotlib import pyplot as plt
 from keras.callbacks import ModelCheckpoint, LearningRateScheduler, EarlyStopping, ReduceLROnPlateau
 
-USE_GPU = True
+USE_GPU = False
 
 if USE_GPU:
     device = '/device:GPU:0'
@@ -19,7 +19,7 @@ else:
 
 class Model:
     def __init__(self, percent_train_test = 0.8, percent_train_val = 0.8, window_size = 24, activation = "relu",loss_fxn="MSE", 
-    epochs = 40, batch_size = 8, verbose = 1, shuffle = True ):
+    epochs = 50, batch_size = 24, verbose = 1, shuffle = True ):
         self.train_amount = percent_train_test
         self.percent_train_val = percent_train_val
         self.num_time = window_size
@@ -29,13 +29,13 @@ class Model:
         self.batch_size = batch_size
         self.verbose = verbose
         self.shuffle = shuffle
-        self.scaler_dict = {}
-        self.scaler = "Standard"
+        #self.scaler_dict = {}
+        #self.scaler = "Standard"
 
 
     def load_data(self):
         # read in data
-        dir = 'C://Users//princ//Downloads//'
+        dir = './'
         data = Dataset(dir + 'air.mon.mean.nc', 'r')
         T = data.variables['air'][:,0]
         t = data.variables['time'][:]
@@ -74,12 +74,9 @@ class Model:
         X[:,:,:,0] = T_US
         X[:,:,:,1] = u_US
         X[:,:,:,2] = v_US
-        self.X = X
 
         #Scale data
-        self.normalizer_denormalizer()
-        X = self.X_scaled 
-
+        X = self.normalizer(X)
 
         X = X.reshape(int(X.shape[0]/self.num_time), self.num_time, X.shape[1],X.shape[2],X.shape[3])
 
@@ -124,15 +121,22 @@ class Model:
 
     #For denormalizing, use cur_scaler[j].inverse_transform. Cur_scaler is defined for each year, so use accordingly. 
     #Scaler Dict is defined for each type of input.
-    def normalizer_denormalizer(self, method = "Standard"):
-        self.X_scaled = np.zeros_like(self.X)
-        for i in range(3):
-            cur_scaler = {}
-            for j in range(self.X.shape[0]):
-                cur_scaler[j] = StandardScaler()
-                self.X_scaled[j,:,:,i] = cur_scaler[j].fit_transform(self.X[j,:,:,i])
-            self.scaler_dict[i] = cur_scaler
-        return
+    def normalizer(self, X):
+        self.X_mean = np.mean(X, axis=0)  # average over the time dimension
+        self.X_std = np.std(X, axis=0)
+        X = (X - self.X_mean)/self.X_std
+#        self.X_scaled = np.zeros_like(self.X)
+#        for i in range(3):
+#            cur_scaler = {}
+#            for j in range(self.X.shape[0]):
+#                cur_scaler[j] = StandardScaler()
+#                self.X_scaled[:,:,:,i] = cur_scaler[j].fit_transform(self.X[j,:,:,i])
+#            self.scaler_dict[i] = cur_scaler
+        return X
+
+    def denormalizer(self, X):
+        X = X*self.X_std + self.X_mean
+        return X
 
     def model_setup(self):
         # TO DO: Make this more accessible so layers can be defined in an easier manner
@@ -147,7 +151,7 @@ class Model:
                 ),               
                 keras.layers.BatchNormalization(),
                 layers.ConvLSTM2D(
-                    filters=64, kernel_size=(2, 2), padding="same", return_sequences=True
+                    filters=128, kernel_size=(2, 2), padding="same", return_sequences=True
                 ),
                 layers.BatchNormalization(),
                 #layers.ConvLSTM2D(
@@ -202,8 +206,8 @@ class Model:
 def main():
     convLstm = Model()
     convLstm.load_data()
-    # convLstm.model_setup()
-    # convLstm.training()
+    convLstm.model_setup()
+    convLstm.training()
 
 if __name__ == "__main__":
     main()
