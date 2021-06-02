@@ -29,6 +29,9 @@ class Model:
         self.batch_size = batch_size
         self.verbose = verbose
         self.shuffle = shuffle
+        self.inputs=  []
+        self.targets =  []
+        self.outputs =  []
         #self.scaler_dict = {}
         #self.scaler = "Standard"
 
@@ -173,21 +176,45 @@ class Model:
                         decay_steps=10000,
                         decay_rate=0.9)
           optimizer = keras.optimizers.Adam(learning_rate=lr_schedule, clipvalue=0.5)
-          model.compile(loss = self.loss_fn,optimizer=optimizer, metrics = ['accuracy','mse'])
+#           model.compile(loss = self.loss_fn,optimizer=optimizer, metrics = ['accuracy','mse'])
+          model.train_step = self.make_print_data_and_train_step(model)
+          model.compile(loss = self.loss_fn,optimizer=optimizer, metrics = ['accuracy','mse'],run_eagerly=True)
 
         self.model = model
         print(model.summary())
         return
 
+    def make_print_data_and_train_step(self, keras_model):
+        original_train_step = keras_model.train_step
+
+        def print_data_and_train_step(original_data):
+            # Basically copied one-to-one from https://git.io/JvDTv
+            data = data_adapter.expand_1d(original_data)
+            x, y_true, w = data_adapter.unpack_x_y_sample_weight(data)
+            y_pred = keras_model(x, training=True)
+
+            # this is pretty much like on_train_batch_begin
+            # K.print_tensor(w, "Sample weight (w) =")
+            # K.print_tensor(x, "Batch input (x) =")
+            # K.print_tensor(y_true, "Batch output (y_true) =")
+            # K.print_tensor(y_pred, "Prediction (y_pred) =")
+
+            result = original_train_step(original_data)
+
+            # add anything here for on_train_batch_end-like behavior
+            self.targets.append(y_true.numpy())
+            self.outputs.append(y_pred.numpy())
+            # print(", Length of Targets",len(self.targets))
+            # self.targets.append(tf.make_ndarray(K.eval(keras_model.input)))
+            # self.outputs.append(tf.make_ndarray(K.eval(keras_model.input)))
+            return result
+
+        return print_data_and_train_step
+     
     def training(self):
-        self.cbk = CollectOutputAndTarget()
-        fetches = [tf.assign(self.cbk.target, self.model._targets[0], validate_shape=False),
-                   tf.assign(self.cbk.output, self.model.outputs[0], validate_shape=False),
-                   tf.assign(self.cbk.input, self.model.inputs[0], validate_shape=False)]
-        self.model._function_kwargs = {'fetches': fetches}  
         self.history = self.model.fit(
             self.X_train_plus_val, self.Y_train_plus_val, batch_size=self.batch_size, epochs=self.epochs, verbose=self.verbose,
-            validation_split= 1- self.percent_train_val, shuffle = self.shuffle, callbacks=[self.cbk]
+            validation_split= 1- self.percent_train_val, shuffle = self.shuffle
         )
         history = self.history
         print(history.history.keys())
@@ -208,26 +235,7 @@ class Model:
         plt.show()
         return
     
-    
-class CollectOutputAndTarget(Callback):
-    def __init__(self):
-        super(CollectOutputAndTarget, self).__init__()
-        self.targets = []  # collect y_true batches
-        self.outputs = []  # collect y_pred batches
-        self.inputs = []
 
-        # the shape of these 2 variables will change according to batch shape
-        # to handle the "last batch", specify `validate_shape=False`
-        self.input = tf.Variable(0.0, shape=tf.TensorShape(None))
-        self.target = tf.Variable(0.0, shape=tf.TensorShape(None))
-        self.output = tf.Variable(0.0, shape=tf.TensorShape(None))
-
-    def on_batch_end(self, batch, logs=None):
-        # evaluate the variables and save them into lists
-        self.inputs.append(K.eval(self.input))
-        self.targets.append(K.eval(self.target))
-        self.outputs.append(K.eval(self.output))
-       
 def main():
     convLstm = Model()
     convLstm.load_data()
