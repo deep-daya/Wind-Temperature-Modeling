@@ -1,8 +1,9 @@
 '''
-This script read the monthly mean temperature, u, and v data
+This script read the daily temperature, u, and v data
 1. plot the x-y plane at the height of 1000 mbar (~100 m) on
 1) the global scale
 2) and US only
+3) U.S.+ surrounding
 for the year of 2000
 2. Time series of all time available (01/1948 to ) using data
    at 100 m and averaged in x and y (US only)
