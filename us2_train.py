@@ -1,9 +1,11 @@
 '''
 This script is to 
-1) train over the daily U.S. data
+1) train over the daily U.S.+surrounding dataset
 2) plot loss (MSE) and metrics (MAPE) curves
 3) plot relative difference map 
+4) time series on the validation data
 '''
+
 
 
 import numpy as np
@@ -30,7 +32,7 @@ else:
     device = '/cpu:0'
 
 class Model:
-    def __init__(self, percent_train_test = 0.8, percent_train_val = 0.8, window_size = 7, activation = "relu",loss_fxn="MSE", drop_rate = 0.5, epochs = 1, batch_size = 128, verbose = 1, shuffle = False ):
+    def __init__(self, percent_train_test = 0.8, percent_train_val = 0.8, window_size = 7, activation = "relu",loss_fxn="MSE", drop_rate = 0.5, epochs = 50, batch_size = 128, verbose = 1, shuffle = False ):
         self.train_amount = percent_train_test
         self.percent_train_val = percent_train_val
         self.num_time = window_size
@@ -62,12 +64,12 @@ class Model:
         dir = './ncep_data/'
         data = Dataset(dir + 'US_daily.nc', 'r')
         #data = Dataset("/content/drive/MyDrive/CS231N-Project/US_daily.nc")
-        T = data.variables['T'][:]
-        #t = data.variables['TIME'][:]
-        u = data.variables['u'][:]
-        v = data.variables['v'][:]
-        lat = data.variables['lat'][:]
-        lon = data.variables['lon'][:]
+        T = data.variables['T2'][:]
+        t = data.variables['TIME'][:]
+        u = data.variables['u2'][:]
+        v = data.variables['v2'][:]
+        lat = data.variables['lat2'][:]
+        lon = data.variables['lon2'][:]
         data.close()
 
         n_seq = int(T.shape[0]/self.num_time) 
@@ -109,11 +111,12 @@ class Model:
         self.Y_train = Y_train
         self.X_val = X_val
         self.Y_val = Y_val
-        self.X_test = X_test
+        self.X_test = X_test  # 5 dims
         self.Y_test = Y_test
         self.channels = X.shape[4]
         self.rows  = X.shape[2]
         self.cols = X.shape[3]
+        self.time = t
         print('x train shape:', X_train.shape)
         print('y train shape:', Y_train.shape)
         print('x val shape:', X_val.shape)
@@ -160,7 +163,7 @@ class Model:
 #            self.scaler_dict[i] = cur_scaler
         return X
 
-    def normalizer_space(self, X, type_data="train"):
+    def normalizer_space(self, X, type_data="X_train"):
         changed =False
         if len(X.shape)== 5:
           Xn = X.reshape(X.shape[0]*X.shape[1],X.shape[2],X.shape[3],X.shape[4])
@@ -258,13 +261,16 @@ class Model:
             result = original_train_step(original_data)
             # add anything here for on_train_batch_end-like behavior
             if self.batch_num % math.ceil(self.X_train.shape[0]/self.batch_size) == 0: 
+              # only compute data within the US
+              y_true = y_true[:,:, 2:-2, 2:-2, :]
+              y_pred = y_pred[:,:, 2:-2, 2:-2, :]
+
               err_mse = np.mean((y_pred - y_true)**2)
               
               mape_all = mape(y_pred, y_true)
               mape_T = mape(y_pred[:,:,:,:,0],y_true[:,:,:,:,0])
               mape_U = mape(y_pred[:,:,:,:,1],y_true[:,:,:,:,1])
               mape_V = mape(y_pred[:,:,:,:,2],y_true[:,:,:,:,2])
-
               y_pred_val = keras_model(self.X_val, training = False) 
               err_mse_Val = np.mean((y_pred_val - self.Y_val)**2)
               mape_all_val = mape(y_pred_val, self.Y_val)
@@ -330,7 +336,7 @@ class Model:
         plt.ylabel('MSE')
         plt.xlabel('epoch')
         plt.legend(['train', 'val'], loc='upper left')
-        plt.savefig('plots/mse_daily_62window_size_3layers_nobatch.png')
+        plt.savefig('plots_us2/mse_us2_7window_size_3layers_nobatch.png')
 
         plt.figure()
         plt.plot(history.history['mean_absolute_percentage_error'])
@@ -338,21 +344,18 @@ class Model:
         plt.ylabel('MAPE')
         plt.xlabel('epoch')
         plt.legend(['train', 'val'], loc='upper left')
-        plt.savefig('plots/mape_daily_62window_size_3layers_nobatch.png')
+        plt.savefig('plots_us2/mape_us2_7window_size_3layers_nobatch.png')
 
         plt.figure()
-        plt.plot(self.mape)
+        plt.plot(self.mape, label='train')
+        plt.plot(self.mape_val, label='val')
         plt.ylabel('MAPE')
-        plt.title('Train history')
-        plt.savefig('plots/mape2_daily_62window_size_3layers_nobatch.png')
-
-        plt.figure()
-        plt.plot(self.mape_val)
-        plt.ylabel('MAPE')
-        plt.title('Val history')
-        plt.savefig('/content/plots/mape_val2_daily_62window_size_3layers_nobatch.png')
+        plt.xlabel('epoch')
+        plt.legend()
+        plt.savefig('plots_us2/mape2_us2_7window_size_3layers_nobatch.png')
 
         return
+
     def plot_differences(self, y_true, y_pred, save_dir, data_type):
         # denormalize data
         y_true = self.denormalizer_space(y_true, data_type) #(time, lat, lon, 3)
@@ -377,38 +380,47 @@ class Model:
         plt.imshow(z_T, cmap='hot', interpolation='nearest')
         cbar = plt.colorbar()
         cbar.set_label(r'$(T_{true}-T_{pred})/max(|T_{true}|)$')
-        plt.savefig(save_dir + "/diff_T_nobatch_62winsize.png")
+        plt.savefig(save_dir + "/diff_us2_T_nobatch_7winsize.png")
 
         plt.figure()
         plt.imshow(z_U, cmap='hot', interpolation='nearest')
         cbar = plt.colorbar()
         cbar.set_label(r'$(u_{true}-u_{pred})/max(|u_{true}|)$')
-        plt.savefig(save_dir + "/diff_U_nobatch_62winsize.png")
+        plt.savefig(save_dir + "/diff_us2_U_nobatch_7winsize.png")
 
         plt.figure()
         plt.imshow(z_V, cmap='hot', interpolation='nearest')
         cbar = plt.colorbar()
         cbar.set_label(r'$(v_{true}-v_{pred})/max(|v_{true}|)$')
-        plt.savefig(save_dir + "/diff_v_nobatch_62winsize.png")
+        plt.savefig(save_dir + "/diff_us2_V_nobatch_7winsize.png")
 
-    def predict(self, test_time, x_test, y_test, data_type, model_name, model=None):
+    def predict(self, test_time, x_test, y_test, us2, data_type, model=None):
         # load model
         if test_time:
-            model = keras.models.load_model(model_name) 
+            model = keras.models.load_model("models/us2_norm_xy_7winsize_3layers_nobatch") 
         else:
             try:
                 model = self.model
             except:
-                model = keras.models.load_model(model_name)
+                model = keras.models.load_model("models/us2_norm_xy_7winsize_3layers_nobatch") 
+        '''
+         x_test and y_test are already normalized!!
+        '''
+        #x_test = self.normalizer_space(x_test, 'X'+data_type)
+        #y_test = self.normalizer_space(y_test, 'Y'+data_type)
 
         y_pred = model.predict(x_test)
         y_pred = np.where(y_pred<1e-6, np.nan, y_pred)
-        mape =  np.nanmean(np.abs(y_pred - y_test)/np.abs(y_test))*100
+
+        if us2:
+            y_test = y_test[:,:, 2:-2, 2:-2, :]
+            y_pred2 = y_pred[:,:, 2:-2, 2:-2, :]
+        mape =  np.nanmean(np.abs(y_pred2 - y_test)/np.abs(y_test))*100
         #print('y test T diff', np.abs(y_pred[-1,:,:,0]- y_test[-1,:,:,0]))
         #print('y test u', np.abs(y_pred[-1,:,:,1]-y_test[-1,:,:,1]))
         #print('y test v', np.abs(y_pred[-1,:,:,2]-y_test[-1,:,:,2]))
 
-        err_mse = np.nanmean((y_pred - y_test)**2)
+        err_mse = np.nanmean((y_pred2 - y_test)**2)
         if test_time:
             print('Test predicted mse', err_mse)
             print('Test predicted MAPE:', mape)
@@ -418,33 +430,100 @@ class Model:
 
         return (y_pred, err_mse, mape) 
 
+    def plot_time_series(self, y_true, y_pred, us2, data_type, save_dir):
+        y_true = self.denormalizer_space(y_true, data_type) #(time, lat, lon, 3)
+        y_pred = self.denormalizer_space(y_pred, data_type)
+        y_true = np.where(np.isnan(y_true), 0., y_true)
+        y_pred = np.where(np.isnan(y_pred), 0., y_pred)
+
+        # get the time axis
+        if data_type == 'Y_val':
+            t_end = -((self.Y_test).shape[0]*self.num_time + 1)
+            t_start = t_end - y_true.shape[0]
+            t = np.round( (self.time[t_start:t_end] - self.time[0])/(24*365), 2)+1948
+        if data_type == 'Y_test':
+            t_start = -y_true.shape[0]
+            t = np.round( (self.time[t_start:] - self.time[0])/(24*365), 2)+1948
+        print('t=', t.shape)
+        # plot the average of the U.S.
+        if us2:
+            y_true = y_true[:, 2:-2, 2:-2, :]
+            y_pred = y_pred[:, 2:-2, 2:-2, :]
+
+        plt.figure(figsize=(20,10))
+        plt.subplot(311)
+        plt.plot(t, np.mean(y_true[:,:,:,0], axis=(1, 2)), label='Truth',linewidth=0.5)
+        plt.plot(t, np.mean(y_pred[:,:,:,0], axis=(1, 2)), label='Prediction',linewidth=0.5)
+        plt.legend()
+        plt.ylabel('T', fontsize=16)
+
+        plt.subplot(312)
+        plt.plot(t, np.mean(y_true[:,:,:,1], axis=(1, 2)), label='Truth',linewidth=0.5)
+        plt.plot(t, np.mean(y_pred[:,:,:,1], axis=(1, 2)), label='Prediction',linewidth=0.5)
+        plt.legend()
+        plt.ylabel('u', fontsize=16)
+
+        plt.subplot(313)
+        plt.plot(t, np.mean(y_true[:,:,:,2], axis=(1, 2)), label='Truth',linewidth=0.5)
+        plt.plot(t, np.mean(y_pred[:,:,:,2], axis=(1, 2)), label='Prediction',linewidth=0.5)
+        plt.ylabel('v', fontsize=16)
+        plt.xlabel('year', fontsize=18)
+        plt.suptitle('U.S. average', fontsize=16)
+        plt.legend()
+        plt.savefig(save_dir +'/tseries_havg.png')
+
+        # plot t series at a point
+        plt.figure(figsize=(20,10))
+        plt.subplot(311)
+        lat = 4
+        lon= 8
+        plt.plot(t, y_true[:,lat, lon,0], label='Truth')
+        plt.plot(t, y_pred[:, lat, lon,0], label='Prediction',linewidth=0.5)
+        plt.ylabel('T', fontsize=16)
+        plt.legend()
+
+        plt.subplot(312)
+        plt.plot(t, y_true[:,lat, lon,1], label='Truth')
+        plt.plot(t, y_pred[:,lat, lon,1], label='Prediction',linewidth=0.5)
+        plt.ylabel('u', fontsize=16)
+        plt.legend()
+
+        plt.subplot(313)
+        plt.plot(t, y_true[:,lat, lon, 2], label='Truth',linewidth=0.5)
+        plt.plot(t, y_pred[:,lat, lon,2], label='Prediction', linewidth=0.5)
+        plt.ylabel('v', fontsize=16)
+        plt.xlabel('t', fontsize=16)
+        plt.legend()
+        plt.suptitle('U.S. average', fontsize=16)
+        plt.savefig(save_dir +'/tseries_point.png')
 
 def main():
     train = False
     test = True
+    us2 = True
     convLstm = Model()
     data = convLstm.load_data()
-    model_name = 'models/norm_xy_7winsize_3layers_nobatch'
     if train:
-        save_dir = 'val_plots'
+        save_dir = 'val_plots_us2'
         convLstm.model_setup()
         convLstm.training()
-        (convLstm.model).save(model_name)
-        convLstm.predict(True, convLstm.X_test, convLstm.Y_test,'_test', model_name) # test data prediction
-        y_pred, _ ,_ = convLstm.predict(False, convLstm.X_val, convLstm.Y_val,'_val', model_name) # val data prediction
+        (convLstm.model).save('models/us2_norm_xy_7winsize_3layers_nobatch')
+        convLstm.predict(True, convLstm.X_test, convLstm.Y_test,us2, '_test') # test data prediction
+        y_pred, _ ,_ = convLstm.predict(False, convLstm.X_val, convLstm.Y_val, us2, '_val') # val data prediction
 
         # plot validation prediction vs trueth
         convLstm.plot_differences(convLstm.Y_val, y_pred, save_dir,'Y_val')
     if test:
-        save_dir = 'val_plots'
-        y_pred, _ ,_ = convLstm.predict(False, convLstm.X_val, convLstm.Y_val, '_val', model_name) # val data prediction
+        save_dir = 'val_plots_us2'
+        y_pred, _ ,_ = convLstm.predict(False, convLstm.X_val, convLstm.Y_val, us2, '_val') # val data prediction
         # plot validation prediction vs trueth
         convLstm.plot_differences(convLstm.Y_val, y_pred, save_dir,'Y_val')
+        convLstm.plot_time_series(convLstm.Y_val, y_pred, us2, 'Y_val', save_dir)
 
-        save_dir = 'test_plots'
-        y_pred,_,_=convLstm.predict(True, convLstm.X_test, convLstm.Y_test, '_test', model_name) # test data prediction
+        save_dir = 'test_plots_us2'
+        y_pred,_,_=convLstm.predict(True, convLstm.X_test, convLstm.Y_test, us2, '_test') # test data prediction
         convLstm.plot_differences(convLstm.Y_test, y_pred, save_dir,'Y_test')
-
+        convLstm.plot_time_series(convLstm.Y_test, y_pred, us2, 'Y_test', save_dir)
 
 if __name__ == "__main__":
     main()
